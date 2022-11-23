@@ -527,7 +527,7 @@ module.exports = function (RED) {
                 return;
             }
             // Create message and set encoding and type
-            var msg = new Message(JSON.stringify(message.payload));
+            var msg = new Message(message.payload);
             // Check if properties set and add if so
             if (message.properties) {
                 for (let property of message.properties) {
