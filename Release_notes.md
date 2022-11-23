@@ -1,8 +1,11 @@
 # Release notes
 
-## elease 0.2.7:
+## Release 0.3.3:
 - Updates:
-    - Telemetry messages are now sored in a (memory-backed) store-forward buffer.
+    - The store-forward buffer is now stored in the node context, allowing for persistent storage of telemetry messages.
+## Release 0.3.2:
+- Updates:
+    - Telemetry messages are now stored in a (memory-backed) store-forward buffer.
 
 ## Release 0.2.6:
 - Updates:
