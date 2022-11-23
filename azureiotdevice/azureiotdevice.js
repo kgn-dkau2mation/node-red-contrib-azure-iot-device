@@ -78,6 +78,7 @@ module.exports = function (RED) {
             this.key = config.key;
             this.passphrase = config.passphrase;
             this.ca = config.ca;
+            this.maxQueueLength = config.maxQueueLength;
             // Array to hold the direct method responses
             this.methodResponses = [];
             //** @type {device.Client} */ this.client;
@@ -108,6 +109,11 @@ module.exports = function (RED) {
             return result || [];
         }
         set messageQueue(val) {
+            const maxQueueLength = parseInt(this.maxQueueLength || 1);
+            if (val.length > maxQueueLength) {
+                error(this, { queueLength: val.length, maxQueueLength }, "Queue length exceeded, queue has been truncated");
+                val = val.slice(0, maxQueueLength);
+            }
             this.context().set("messageQueue", val, "file");
         }
     };
@@ -653,7 +659,8 @@ module.exports = function (RED) {
             caname: { value: "" },
             cert: { type: "text" },
             key: { type: "text" },
-            ca: { type: "text" }
+            ca: { type: "text" },
+            maxQueueLength: { value: 10_000 }
         }
     });
 
