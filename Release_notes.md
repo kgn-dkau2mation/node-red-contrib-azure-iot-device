@@ -1,5 +1,9 @@
 # Release notes
 
+## Release 0.3.4:
+- Updates:
+    - Added a max queue length.
+
 ## Release 0.3.3:
 - Updates:
     - The store-forward buffer is now stored in the node context, allowing for persistent storage of telemetry messages.
