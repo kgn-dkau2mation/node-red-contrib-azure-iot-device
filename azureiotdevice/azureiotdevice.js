@@ -54,53 +54,67 @@ module.exports = function (RED) {
     };
 
     // Setup node-red node to represent Azure IoT Device
-    function AzureIoTDevice(config) {
-        // Create the Node-RED node
-        RED.nodes.createNode(this, config);
+    class AzureIoTDevice {
+        constructor(config) {
+            // Create the Node-RED node
+            RED.nodes.createNode(this, config);
 
-        const node = this;
-
-        // Set properties
-        node.deviceid = config.deviceid;
-        node.pnpModelid = config.pnpModelid;
-        node.connectiontype = config.connectiontype;
-        node.authenticationmethod = config.authenticationmethod;
-        node.enrollmenttype = config.enrollmenttype;
-        node.iothub = config.iothub;
-        node.isIotcentral = config.isIotcentral;
-        node.scopeid = config.scopeid;
-        node.saskey = config.saskey;
-        node.protocol = config.protocol;
-        node.retryInterval = config.retryInterval;
-        node.methods = config.methods;
-        node.DPSpayload = config.DPSpayload;
-        node.gatewayHostname = config.gatewayHostname;
-        node.cert = config.cert;
-        node.key = config.key;
-        node.passphrase = config.passphrase;
-        node.ca = config.ca;
-        // Array to hold the direct method responses
-        node.methodResponses = [];
-        //** @type {device.Client} */ this.client;
-        node.client = null;
-        //** @type {device.Twin} */ this.twin;
-        node.twin = null;
-
-        /**@type {Message[]} */
-        node.messageQueue = [];
-
-        /** @type {Promise<void>|null} */
-        node.sendMessagesPromise = null;
+            // Set properties
+            this.deviceid = config.deviceid;
+            this.pnpModelid = config.pnpModelid;
+            this.connectiontype = config.connectiontype;
+            this.authenticationmethod = config.authenticationmethod;
+            this.enrollmenttype = config.enrollmenttype;
+            this.iothub = config.iothub;
+            this.isIotcentral = config.isIotcentral;
+            this.scopeid = config.scopeid;
+            this.saskey = config.saskey;
+            this.protocol = config.protocol;
+            this.retryInterval = config.retryInterval;
+            this.methods = config.methods;
+            this.DPSpayload = config.DPSpayload;
+            this.gatewayHostname = config.gatewayHostname;
+            this.cert = config.cert;
+            this.key = config.key;
+            this.passphrase = config.passphrase;
+            this.ca = config.ca;
+            // Array to hold the direct method responses
+            this.methodResponses = [];
+            //** @type {device.Client} */ this.client;
+            this.client = null;
+            //** @type {device.Twin} */ this.twin;
+            this.twin = null;
 
 
-        setStatus(node, statusEnum.disconnected);
+            /** @type {Promise<void>|null} */
+            this.sendMessagesPromise = null;
 
-        // Initiate
-        initiateDevice(node);
+
+            setStatus(this, statusEnum.disconnected);
+
+            // Initiate
+            initiateDevice(this);
+        }
+
+        useQueue(func) {
+            const queue = this.messageQueue;
+            const result = func(queue);
+            this.messageQueue = queue;
+            return result;
+        }
+
+        get messageQueue() {
+            const result = this.context().get("messageQueue", "file");
+            return result || [];
+        }
+        set messageQueue(val) {
+            this.context().set("messageQueue", val, "file");
+        }
     };
 
+
     // Set status of node on node-red
-    var setStatus = function (node, status) {
+    var setStatus = function (/**@type {AzureIoTDevice} */ node, status) {
         node.status({
             fill: status.fill,
             shape: status.shape,
@@ -472,28 +486,17 @@ module.exports = function (RED) {
             error(node, message, node.deviceid + ' -> Invalid telemetry format.');
             return;
         }
-        if (message.timestamp && isNaN(Date.parse(message.timestamp))) {
-            error(node, message, node.deviceid + ' -> Invalid telemetry format: if present, timestamp must be in ISO format (e.g., YYYY-MM-DDTHH:mm:ss.sssZ).');
-            return;
-        }
-
-        // Create message and set encoding and type
-        var msg = new Message(JSON.stringify(message.payload));
-        // Check if properties set and add if so
-        if (properties) {
-            for (let property in properties) {
-                msg.properties.add(properties[property].key, properties[property].value);
-            }
-        }
-        msg.contentEncoding = 'utf-8';
-        msg.contentType = 'application/json';
+        const serialized = {
+            payload: JSON.stringify(message.payload),
+            properties
+        };
         // Send the message
-        queueMessage(node, msg);
+        queueMessage(node, serialized);
 
     };
 
     function queueMessage(node, msg) {
-        node.messageQueue.push(msg);
+        node.useQueue(q => q.push(msg));
         sendQueuedMessages(node);
     }
 
@@ -506,10 +509,10 @@ module.exports = function (RED) {
 
     async function sendQueuedMessagesAsync(node) {
         let msg;
-        while (msg = node.messageQueue.pop()) {
+        while (msg = node.useQueue(q => q.pop())) {
             const success = await sendMessageAsync(node, msg);
             if (!success) {
-                node.messageQueue.push(msg);
+                node.useQueue(q => q.push(msg));
                 await timeoutPromise(10_000);
             }
         }
@@ -523,7 +526,18 @@ module.exports = function (RED) {
                 resolve(false);
                 return;
             }
-            node.client.sendEvent(message, function (err, res) {
+            // Create message and set encoding and type
+            var msg = new Message(JSON.stringify(message.payload));
+            // Check if properties set and add if so
+            if (message.properties) {
+                for (let property of message.properties) {
+                    msg.properties.add(property.key, property.value);
+                }
+            }
+            msg.contentEncoding = 'utf-8';
+            msg.contentType = 'application/json';
+
+            node.client.sendEvent(msg, function (err, res) {
                 if (err) {
                     setStatus(node, { fill: "yellow", shape: "dot", text: "Err: " + err.toString() });
                     resolve(false);
