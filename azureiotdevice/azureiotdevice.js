@@ -85,6 +85,7 @@ module.exports = function (RED) {
             this.client = null;
             //** @type {device.Twin} */ this.twin;
             this.twin = null;
+            this.currentStatus = statusEnum.provisioning;
 
 
             /** @type {Promise<void>|null} */
@@ -121,6 +122,12 @@ module.exports = function (RED) {
 
     // Set status of node on node-red
     var setStatus = function (/**@type {AzureIoTDevice} */ node, status) {
+        if (!status) {
+            status = node.currentStatus;
+        }
+        else {
+            node.currentStatus = status;
+        }
         node.status({
             fill: status.fill,
             shape: status.shape,
@@ -503,33 +510,52 @@ module.exports = function (RED) {
 
     function queueMessage(node, msg) {
         node.useQueue(q => q.push(msg));
+        setStatus(node, null);
         sendQueuedMessages(node);
     }
 
     function sendQueuedMessages(node) {
         if (node.sendMessagesPromise) {
-            return
+            node.log("node is already sending queued messages")
+            return;
         }
         node.sendMessagesPromise = sendQueuedMessagesAsync(node);
     }
 
     async function sendQueuedMessagesAsync(node) {
-        let msg;
-        while (msg = node.useQueue(q => q.pop())) {
-            const success = await sendMessageAsync(node, msg);
-            if (!success) {
-                node.useQueue(q => q.push(msg));
+        const maxMessagesPerBatch = 100;
+        while (true) {
+            const queue = node.messageQueue;
+            const messagesToSend = queue.slice(0, maxMessagesPerBatch);
+            if (messagesToSend.length === 0) {
+                break;
+            }
+            const remainingMessages = queue.slice(maxMessagesPerBatch);
+            node.messageQueue = remainingMessages;
+
+            const sendPromises = messagesToSend.map(message => sendMessageAsync(node, message));
+            const statuses = await Promise.all(sendPromises);
+            const failures = statuses.filter(status => status.error !== null);
+            if (failures.length > 0) {
+                //re-queue failed messages
+                node.useQueue(q => q.push(...failures.map(f => f.message)))
+                setStatus(node, { fill: "yellow", shape: "dot", text: "Err: " + failures[0].error.toString() });
                 await timeoutPromise(10_000);
+                setStatus(node, { fill: "yellow", shape: "dot", text: "Retrying..." });
+            }
+            else {
+                setStatus(node, statusEnum.connected);
             }
         }
         node.sendMessagesPromise = null;
     }
 
     function sendMessageAsync(node, message) {
-        return new Promise(function (resolve, reject) {
+        return new Promise((resolve, reject) => {
+
             if (!node.client) {
                 setStatus(node, statusEnum.disconnected);
-                resolve(false);
+                resolve({ error: "No node", message });
                 return;
             }
             // Create message and set encoding and type
@@ -542,17 +568,24 @@ module.exports = function (RED) {
             }
             msg.contentEncoding = 'utf-8';
             msg.contentType = 'application/json';
-
-            node.client.sendEvent(msg, function (err, res) {
+            let isResolved = false;
+            timeoutPromise(20_000).then(() => {
+                if (isResolved)
+                    return;
+                resolve({ error: "timeout", message })
+            })
+            node.client.sendEvent(msg, (err, _) => {
+                isResolved = true;
                 if (err) {
-                    setStatus(node, { fill: "yellow", shape: "dot", text: "Err: " + err.toString() });
-                    resolve(false);
-                } else {
-                    setStatus(node, statusEnum.connected);
-                    resolve(true);
+                    node.log("error sending message: " + err);
+
+                    resolve({ error: err.toString(), message });
+                }
+                else {
+                    resolve({ error: null, message });
                 }
             });
-        })
+        });
     }
 
     function timeoutPromise(timeoutMs) {

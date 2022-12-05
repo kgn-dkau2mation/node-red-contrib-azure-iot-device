@@ -1,5 +1,10 @@
 # Release notes
 
+## Release 0.3.6:
+- Updates:
+    - message sending is now batched in groups of 100.
+    - 20s timeout when sending messages.
+
 ## Release 0.3.4:
 - Updates:
     - Added a max queue length.

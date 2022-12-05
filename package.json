@@ -1,7 +1,7 @@
 {
     "name": "@kgn-dkau2mation/node-red-contrib-azure-iot-device",
     "description": "Node-RED node to connect to the Azure IoT platform as a device.",
-    "version": "0.3.5",
+    "version": "0.3.6",
     "repository": {
         "type": "git",
         "url": "git+https://github.com/kgn-dkau2mation/node-red-contrib-azure-iot-device.git"
