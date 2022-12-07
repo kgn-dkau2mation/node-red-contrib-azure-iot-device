@@ -1,5 +1,9 @@
 # Release notes
 
+## Release 0.3.7:
+- Updates:
+    - Better logging. Start node-red by using `DEBUG=azureiotdevice node-red -v` to see log messages.
+
 ## Release 0.3.6:
 - Updates:
     - message sending is now batched in groups of 100.

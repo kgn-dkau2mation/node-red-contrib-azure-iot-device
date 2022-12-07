@@ -14,6 +14,7 @@ module.exports = function (RED) {
     'use strict'
     const Client = require('azure-iot-device').Client;
     const Message = require('azure-iot-device').Message;
+    const debug = require('debug')("azureiotdevice");
 
     // Only AMQP(WS) or MQTT(WS) used as protocol, no HTTP support
     const Protocols = {
@@ -117,6 +118,10 @@ module.exports = function (RED) {
             }
             this.context().set("messageQueue", val, "file");
         }
+
+        debug(formatter, ...args) {
+            debug(`${this.deviceid}: ${formatter}`, ...args);
+        }
     };
 
 
@@ -148,7 +153,7 @@ module.exports = function (RED) {
     function verifyCertificatePem(node, pem) {
         try {
             // Get the certificate from pem, if successful it is a cert
-            node.log(node.deviceid + ' -> Verifying PEM Certificate');
+            node.debug('Verifying PEM Certificate');
             var cert = pki.certificateFromPem(pem);
         } catch (err) {
             return false;
@@ -165,7 +170,7 @@ module.exports = function (RED) {
 
     // Close all listeners
     function closeAll(node) {
-        node.log(node.deviceid + ' -> Closing all clients.');
+        node.debug('Closing all clients.');
         try {
             node.twin.removeAllListeners();
             node.twin = null;
@@ -176,9 +181,9 @@ module.exports = function (RED) {
             node.client.removeAllListeners();
             node.client.close((err, result) => {
                 if (err) {
-                    node.log(node.deviceid + ' -> Azure IoT Device Client close failed: ' + JSON.stringify(err));
+                    node.debug('Azure IoT Device Client close failed: ' + JSON.stringify(err));
                 } else {
-                    node.log(node.deviceid + ' -> Azure IoT Device Client closed.');
+                    node.debug('Azure IoT Device Client closed.');
                 }
             });
             node.client = null;
@@ -207,7 +212,7 @@ module.exports = function (RED) {
             } else if (msg.topic === 'property' && node.twin) {
                 sendDeviceProperties(node, msg);
             } else if (msg.topic === 'response') {
-                node.log(node.deviceid + ' -> Method response received with id: ' + msg.payload.requestId);
+                node.debug('Method response received with id: ' + msg.payload.requestId);
                 sendMethodResponse(node, msg)
             } else {
                 error(node, msg, node.deviceid + ' -> Incorrect input. Must be of type \"telemetry\" or \"property\" or \"response\".');
@@ -224,7 +229,7 @@ module.exports = function (RED) {
                     // Get the twin, throw error if it fails
                     if (result === null) {
                         retrieveTwin(node).then(result => {
-                            node.log(node.deviceid + ' -> Device twin retrieved.');
+                            node.debug('Device twin retrieved.');
                         }).catch(function (err) {
                             error(node, err, node.deviceid + ' -> Retrieving device twin failed');
                             throw new Error(err);
@@ -252,12 +257,12 @@ module.exports = function (RED) {
         return new Promise((resolve, reject) => {
             try {
                 // Log the start
-                node.log(node.deviceid + ' -> Initiate IoT Device settings.');
+                node.debug('Initiate IoT Device settings.');
 
                 // Set the security properties
                 var options = {};
                 if (node.authenticationmethod === "x509") {
-                    node.log(node.deviceid + ' -> Validating device certificates.');
+                    node.debug('Validating device certificates.');
                     // Set cert options
                     // verify PEM work around for SDK issue
                     if (verifyCertificatePem(node, node.cert)) {
@@ -296,22 +301,22 @@ module.exports = function (RED) {
                         // Turn payload into JSON
                         try {
                             payload = JSON.parse(node.DPSpayload);
-                            node.log(node.deviceid + ' -> DPS Payload added.');
+                            node.debug('DPS Payload added.');
                         } catch (err) {
                             // do nothing 
                         }
                     }
 
                     // Register the device.
-                    node.log(node.deviceid + ' -> Provision IoT Device using DPS.');
+                    node.debug('Provision IoT Device using DPS.');
                     if (node.connectiontype === "constr") {
                         resolve(options);
                     } else {
                         provisioningClient.setProvisioningPayload(JSON.stringify(payload));
                         provisioningClient.register().then(result => {
                             // Process provisioning details
-                            node.log(node.deviceid + ' -> DPS registration succeeded.');
-                            node.log(node.deviceid + ' -> Assigned hub: ' + result.assignedHub);
+                            node.debug('DPS registration succeeded.');
+                            node.debug('Assigned hub: ' + result.assignedHub);
                             var msg = {};
                             msg.topic = 'provisioning';
                             msg.deviceId = result.deviceId;
@@ -356,7 +361,7 @@ module.exports = function (RED) {
 
         // Update options
         if (node.gatewayHostname !== "") {
-            node.log(node.deviceid + ' -> Connect through gateway: ' + node.gatewayHostname);
+            node.debug('Connect through gateway: ' + node.gatewayHostname);
             try {
                 options.ca = node.ca;
                 connectionString = connectionString + ';GatewayHostName=' + node.gatewayHostname;
@@ -372,7 +377,7 @@ module.exports = function (RED) {
         // Add pnp modelid to options
         if (node.pnpModelid) {
             options.modelId = node.pnpModelid;
-            node.log(node.deviceid + ' -> Set PnP Model ID: ' + node.pnpModelid);
+            node.debug('Set PnP Model ID: ' + node.pnpModelid);
         }
 
         // Return the promise
@@ -397,24 +402,24 @@ module.exports = function (RED) {
 
                     // Listen to commands for defined direct methods
                     for (let method in node.methods) {
-                        node.log(node.deviceid + ' -> Adding synchronous command: ' + node.methods[method].name);
+                        node.debug('Adding synchronous command: ' + node.methods[method].name);
                         var mthd = node.methods[method].name;
                         // Define the method on the client
                         node.client.onDeviceMethod(mthd, function (request, response) {
-                            node.log(node.deviceid + ' -> Command received: ' + request.methodName);
-                            node.log(node.deviceid + ' -> Command payload: ' + JSON.stringify(request.payload));
+                            node.debug('Command received: ' + request.methodName);
+                            node.debug('Command payload: ' + JSON.stringify(request.payload));
                             node.send({ payload: request, topic: "command", deviceId: node.deviceid });
 
                             // Now wait for the response
                             getResponse(node, request.requestId).then(message => {
                                 var rspns = message.payload;
-                                node.log(node.deviceid + ' -> Method response status: ' + rspns.status);
-                                node.log(node.deviceid + ' -> Method response payload: ' + JSON.stringify(rspns.payload));
+                                node.debug('Method response status: ' + rspns.status);
+                                node.debug('Method response payload: ' + JSON.stringify(rspns.payload));
                                 response.send(rspns.status, rspns.payload, function (err) {
                                     if (err) {
-                                        node.log(node.deviceid + ' -> Failed sending method response: ' + err);
+                                        node.debug('Failed sending method response: ' + err);
                                     } else {
-                                        node.log(node.deviceid + ' -> Successfully sent method response: ' + request.methodName);
+                                        node.debug('Successfully sent method response: ' + request.methodName);
                                     }
                                 });
                             })
@@ -425,10 +430,10 @@ module.exports = function (RED) {
                     };
 
                     // Start listening to C2D messages
-                    node.log(node.deviceid + ' -> Listening to C2D messages');
+                    node.debug('Listening to C2D messages');
                     // Define the message listener
                     node.client.on('message', function (msg) {
-                        node.log(node.deviceid + ' -> C2D message received, data: ' + msg.data);
+                        node.debug('C2D message received, data: ' + msg.data);
                         var message = {
                             messageId: msg.messageId,
                             data: msg.data.toString('utf8'),
@@ -439,12 +444,12 @@ module.exports = function (RED) {
                             if (err) {
                                 error(node, err, node.deviceid + ' -> C2D Message complete error.');
                             } else {
-                                node.log(node.deviceid + ' -> C2D Message completed.');
+                                node.debug('C2D Message completed.');
                             }
                         });
                     });
 
-                    node.log(node.deviceid + ' -> Device client connected.');
+                    node.debug('Device client connected.');
                     setStatus(node, statusEnum.connected);
                     resolve(null);
                 }).catch(function (err) {
@@ -464,12 +469,12 @@ module.exports = function (RED) {
     // Get the device twin 
     function retrieveTwin(node) {
         // Set the options first and then open the connection
-        node.log(node.deviceid + ' -> Retrieve device twin.');
+        node.debug('Retrieve device twin.');
         return new Promise((resolve, reject) => {
             node.client.getTwin().then(result => {
-                node.log(node.deviceid + ' -> Device twin created.');
+                node.debug('Device twin created.');
                 node.twin = result;
-                node.log(node.deviceid + ' -> Twin contents: ' + JSON.stringify(node.twin.properties));
+                node.debug('Twin contents: ' + JSON.stringify(node.twin.properties));
                 // Send the twin properties to Node Red
                 var msg = {};
                 msg.topic = 'property';
@@ -479,7 +484,7 @@ module.exports = function (RED) {
 
                 // Get the desired properties
                 node.twin.on('properties.desired', function (payload) {
-                    node.log(node.deviceid + ' -> Desired properties received: ' + JSON.stringify(payload));
+                    node.debug('Desired properties received: ' + JSON.stringify(payload));
                     var msg = {};
                     msg.topic = 'property';
                     msg.deviceId = node.deviceid;
@@ -511,18 +516,19 @@ module.exports = function (RED) {
     function queueMessage(node, msg) {
         node.useQueue(q => q.push(msg));
         setStatus(node, null);
-        sendQueuedMessages(node);
+        startMessageSendingTask(node);
     }
 
-    function sendQueuedMessages(node) {
+    function startMessageSendingTask(node) {
         if (node.sendMessagesPromise) {
-            node.log("node is already sending queued messages")
+            node?.debug("Message sending task is already running, do not start a new task.")
             return;
         }
         node.sendMessagesPromise = sendQueuedMessagesAsync(node);
     }
 
     async function sendQueuedMessagesAsync(node) {
+        node?.debug("Starting a new message sending task...")
         const maxMessagesPerBatch = 100;
         while (true) {
             const queue = node.messageQueue;
@@ -532,21 +538,27 @@ module.exports = function (RED) {
             }
             const remainingMessages = queue.slice(maxMessagesPerBatch);
             node.messageQueue = remainingMessages;
+            node?.debug(`Sending ${messagesToSend.length} messages, ${remainingMessages.length} left in queue`);
 
             const sendPromises = messagesToSend.map(message => sendMessageAsync(node, message));
             const statuses = await Promise.all(sendPromises);
+
             const failures = statuses.filter(status => status.error !== null);
             if (failures.length > 0) {
                 //re-queue failed messages
-                node.useQueue(q => q.push(...failures.map(f => f.message)))
-                setStatus(node, { fill: "yellow", shape: "dot", text: "Err: " + failures[0].error.toString() });
+                node.useQueue(q => q.push(...failures.map(f => f.message)));
+                const firstError = failures[0].error.toString();
+                setStatus(node, { fill: "yellow", shape: "dot", text: "Err: " + firstError });
+                node?.debug(`Tried to send ${messagesToSend.length}, but had ${failures.length} errors: ${firstError}`);
                 await timeoutPromise(10_000);
                 setStatus(node, { fill: "yellow", shape: "dot", text: "Retrying..." });
             }
             else {
+                node?.debug(`Sent ${messagesToSend.length} without problems`);
                 setStatus(node, statusEnum.connected);
             }
         }
+        node?.debug("Message sending task completed");
         node.sendMessagesPromise = null;
     }
 
@@ -603,7 +615,7 @@ module.exports = function (RED) {
                     error(node, err, node.deviceid + ' -> Sending device properties failed.');
                     setStatus(node, statusEnum.error);
                 } else {
-                    node.log(node.deviceid + ' -> Device properties sent: ' + JSON.stringify(message.payload));
+                    node.debug('Device properties sent: ' + JSON.stringify(message.payload));
                     setStatus(node, statusEnum.connected);
                 }
             });
@@ -617,7 +629,7 @@ module.exports = function (RED) {
     function sendMethodResponse(node, message) {
         // Push the reponse to the array
         var methodResponse = message.payload;
-        node.log(node.deviceid + ' -> Creating response for command: ' + methodResponse.methodName);
+        node.debug('Creating response for command: ' + methodResponse.methodName);
         node.methodResponses.push(
             { requestId: methodResponse.requestId, response: message }
         );
