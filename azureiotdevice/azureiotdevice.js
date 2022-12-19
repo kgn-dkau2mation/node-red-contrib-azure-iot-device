@@ -140,6 +140,7 @@ module.exports = function (RED) {
         });
     };
 
+
     // Send catchable error to node-red
     var error = function (node, payload, message) {
         var msg = {};
@@ -147,6 +148,15 @@ module.exports = function (RED) {
         msg.message = message;
         msg.payload = payload;
         node.error(msg);
+    }
+
+
+    var setErrorStatus = function (node, message, err) {
+        error(node, err, `${node.deviceId} -> ${message}`);
+        setStatus(node, {
+            ...statusEnum.error,
+            text: `Error: ${message}`
+        })
     }
 
     // Check if valid PEM cert
@@ -193,7 +203,7 @@ module.exports = function (RED) {
     };
 
     // Initiate provisioning and retry if network not available.
-    function initiateDevice(node) {
+    async function initiateDevice(node) {
 
         // Ensure resources are reset
         node.on('close', function (done) {
@@ -221,31 +231,25 @@ module.exports = function (RED) {
 
         // Provision device
         node.retries = 0;
-        provisionDevice(node).then(result => {
-            if (result) {
-                // Connect device to Azure IoT
-                node.retries = 0;
-                connectDevice(node, result).then(result => {
-                    // Get the twin, throw error if it fails
-                    if (result === null) {
-                        retrieveTwin(node).then(result => {
-                            node.debug('Device twin retrieved.');
-                        }).catch(function (err) {
-                            error(node, err, node.deviceid + ' -> Retrieving device twin failed');
-                            throw new Error(err);
-                        });
-                    } else {
-                        throw new Error(result);
-                    }
-                }).catch(function (err) {
-                    error(node, err, node.deviceid + ' -> Device connection failed');
-                });
-            } else {
-                throw new Error(result);
+        try {
+            const provisionResult = await provisionDevice(node);
+            if (!provisionResult) {
+                throw "No Provision result";
             }
-        }).catch(function (err) {
-            error(node, err, node.deviceid + ' -> Device provisioning failed.');
-        });
+            // Connect device to Azure IoT
+            node.retries = 0;
+            await connectDevice(node, provisionResult);
+            await retrieveTwin(node);
+            node.debug("initiate device complete")
+        }
+        catch (err) {
+            if (err instanceof string) {
+                setErrorStatus(node, `Device provisioning failed: ${err}`, err);
+            }
+            else {
+                setErrorStatus(node, "Device provisioning failed", err);
+            }
+        }
     };
 
     // Provision the client 
@@ -328,8 +332,7 @@ module.exports = function (RED) {
                             resolve(options);
                         }).catch(function (err) {
                             // Handle error
-                            error(node, err, node.deviceid + ' -> DPS registration failed.');
-                            setStatus(node, statusEnum.error);
+                            setErrorStatus(node, "DPS registration failed", err);
                             reject(err);
                         });
                     }
@@ -366,8 +369,7 @@ module.exports = function (RED) {
                 options.ca = node.ca;
                 connectionString = connectionString + ';GatewayHostName=' + node.gatewayHostname;
             } catch (err) {
-                error(node, err, node.deviceid + ' -> Certificate file error.');
-                setStatus(node, statusEnum.error);
+                setErrorStatus(node, "Certificate file error", err);
             };
         }
 
@@ -388,8 +390,7 @@ module.exports = function (RED) {
                     // Setup the client
                     // React or errors
                     node.client.on('error', function (err) {
-                        error(node, err, node.deviceid + ' -> Device Client error.');
-                        setStatus(node, statusEnum.error);
+                        setErrorStatus(node, "Device Client error", err);
                     });
 
                     // React on disconnect and try to reconnect
@@ -453,13 +454,11 @@ module.exports = function (RED) {
                     setStatus(node, statusEnum.connected);
                     resolve(null);
                 }).catch(function (err) {
-                    error(node, err, node.deviceid + ' -> Device client open failed.');
-                    setStatus(node, statusEnum.error);
+                    setErrorStatus(node, "Device client open failed", err);
                     reject(err);
                 });
             }).catch(function (err) {
-                error(node, err, node.deviceid + ' -> Device options setting failed.');
-                setStatus(node, statusEnum.error);
+                setErrorStatus(node, "Device options setting failed", err);
                 reject(err);
             });
 
@@ -474,7 +473,7 @@ module.exports = function (RED) {
             node.client.getTwin().then(result => {
                 node.debug('Device twin created.');
                 node.twin = result;
-                node.debug('Twin contents: ' + JSON.stringify(node.twin.properties));
+                node.debug('Twin contents');
                 // Send the twin properties to Node Red
                 var msg = {};
                 msg.topic = 'property';
@@ -484,7 +483,7 @@ module.exports = function (RED) {
 
                 // Get the desired properties
                 node.twin.on('properties.desired', function (payload) {
-                    node.debug('Desired properties received: ' + JSON.stringify(payload));
+                    node.debug('Desired properties received');
                     var msg = {};
                     msg.topic = 'property';
                     msg.deviceId = node.deviceid;
@@ -612,10 +611,9 @@ module.exports = function (RED) {
         if (node.twin) {
             node.twin.properties.reported.update(message.payload, function (err) {
                 if (err) {
-                    error(node, err, node.deviceid + ' -> Sending device properties failed.');
-                    setStatus(node, statusEnum.error);
+                    setErrorStatus(node, "Sending device properties failed", err);
                 } else {
-                    node.debug('Device properties sent: ' + JSON.stringify(message.payload));
+                    node.debug('Device properties sent');
                     setStatus(node, statusEnum.connected);
                 }
             });

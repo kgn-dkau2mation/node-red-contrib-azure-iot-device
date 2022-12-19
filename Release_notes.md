@@ -1,5 +1,9 @@
 # Release notes
 
+## Release 0.3.8:
+- Updates:
+    - More descriptive errors.
+
 ## Release 0.3.7:
 - Updates:
     - Better logging. Start node-red by using `DEBUG=azureiotdevice node-red -v` to see log messages.
